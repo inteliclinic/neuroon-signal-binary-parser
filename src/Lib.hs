@@ -18,7 +18,6 @@ import qualified Data.ByteString.Lazy.Search as BLS
 import qualified Data.ByteString.Lazy.Char8 as BC
 import System.IO
 import System.Environment
-import Control.Exception
 import Data.Monoid ((<>))
 import GHC.Generics (Generic)
 
@@ -110,7 +109,7 @@ parseProgram = do
   args <- getArgs
 
   -- testTimestamp <- (read <$> getLine) :: IO Word64
-  testTimestamp <- exitWithMessageOnError "Invalid timestamp file structure" (getStartTimestampFromCsv <$> BC.readFile (args !! 2))
+  testTimestamp <- getStartTimestampFromCsv <$> BC.readFile (args !! 2)
 
   eegFrames <- rebuildTimestamps testTimestamp . parseEegFrames <$> BL.readFile (args !! 0)
   patFrames <- rebuildTimestamps testTimestamp . parsePatFrames <$> BL.readFile (args !! 1)
@@ -129,10 +128,3 @@ parseProgram = do
 
       parseEegFrames = map decode . chunked 20
       parsePatFrames = map decode . chunked 20
-
-      exitWithMessageOnError :: String -> IO a -> IO a
-      exitWithMessageOnError msg action = do
-        eith <- try action
-        case eith of
-          Right x -> return x
-          Left  e -> putStrLn msg >> ioError e
