@@ -59,9 +59,15 @@ chunked n bs
   | otherwise       = let (chunk,rest) = BL.splitAt n bs
                       in chunk : chunked n rest
 
+stringBuilder :: Show a => a -> Builder
+stringBuilder = BB.stringUtf8 . show
+
+commaAndStringBuilder :: Show a => a -> Builder
+commaAndStringBuilder str = BB.charUtf8 ',' <> stringBuilder str
+
 eegToCsv :: OutputFrame EegFrame -> Builder
 eegToCsv (MkOutputFrame ts (MkEegFrame frs)) = VU.foldl buildLine mempty (VU.zip frameTimestamps frs)
-  where buildLine acc (a, b) = acc <> BB.charUtf8 '\n' <> BB.stringUtf8 (show (ts+a)) <> BB.charUtf8 ',' <> (BB.stringUtf8 $ show b)
+  where buildLine acc (a, b) = acc <> BB.charUtf8 '\n' <> stringBuilder (ts+a) <> commaAndStringBuilder b
         frameTimestamps = VU.enumFromStepN 0 8 56
 
 eegCsvHeader :: Builder
@@ -72,9 +78,11 @@ patCsvHeader = BB.byteString "timestamp,ir_led,red_led,accel_x,accel_y,accel_z,t
 
 patToCsv :: OutputFrame PatFrame -> Builder
 patToCsv (MkOutputFrame ts (MkPatFrame ir red (x, y, z) (t1, t2))) =
-  mconcat [BB.stringUtf8 $ show ts, BB.charUtf8 ',',  BB.stringUtf8 $ show ir, BB.charUtf8 ',', BB.stringUtf8 $ show red, BB.charUtf8 ',', BB.stringUtf8 $ show x,  BB.charUtf8 ',', BB.stringUtf8 $ show y,  BB.charUtf8 ',',  BB.stringUtf8 $ show  z,  BB.charUtf8 ',', BB.stringUtf8 $ show t1, BB.charUtf8 ',', BB.stringUtf8 $ show t2, BB.charUtf8 '\n']
+  mconcat [stringBuilder ts, commaAndStringBuilder ir, commaAndStringBuilder red,
+           commaAndStringBuilder x,  commaAndStringBuilder y,  commaAndStringBuilder  z,
+           commaAndStringBuilder t1, commaAndStringBuilder t2, BB.charUtf8 '\n']
 
-
+  
 rebuildTimestamps :: Int64 -> [InputFrame a] -> [OutputFrame a]
 rebuildTimestamps _  [] = []
 rebuildTimestamps ts ((MkInputFrame delta0 fr) : frs) =
