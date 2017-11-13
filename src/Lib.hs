@@ -40,7 +40,7 @@ data PatFrame = MkPatFrame {
 } deriving(Eq, Read, Show)
 
 instance Binary PatFrame where
-  put (MkPatFrame redLed irLed (x, y, z) (t1, t2)) = put irLed *> put redLed *> put x *> put y *> put z *> put t1 *> put t2
+  put (MkPatFrame ir red (x, y, z) (t1, t2)) = put ir *> put red *> put x *> put y *> put z *> put t1 *> put t2
   get = MkPatFrame <$> getInt32le <*> getInt32le <*> ((,,) <$> getInt16le <*> getInt16le <*> getInt16le) <*> ((,) <$> get <*> get)
 
 data InputFrame a = MkInputFrame Word32 a
@@ -71,8 +71,8 @@ patCsvHeader :: Builder
 patCsvHeader = BB.byteString "timestamp,ir_led,red_led,accel_x,accel_y,accel_z,temperature1,temperature2"
 
 patToCsv :: OutputFrame PatFrame -> Builder
-patToCsv (MkOutputFrame ts (MkPatFrame irLed redLed (x, y, z) (t1, t2))) =
-  mconcat [BB.stringUtf8 $ show ts, BB.charUtf8 ',',  BB.stringUtf8 $ show irLed, BB.charUtf8 ',', BB.stringUtf8 $ show redLed, BB.charUtf8 ',', BB.stringUtf8 $ show x,  BB.charUtf8 ',', BB.stringUtf8 $ show y,  BB.charUtf8 ',',  BB.stringUtf8 $ show  z,  BB.charUtf8 ',', BB.stringUtf8 $ show t1, BB.charUtf8 ',', BB.stringUtf8 $ show t2, BB.charUtf8 '\n']
+patToCsv (MkOutputFrame ts (MkPatFrame ir red (x, y, z) (t1, t2))) =
+  mconcat [BB.stringUtf8 $ show ts, BB.charUtf8 ',',  BB.stringUtf8 $ show ir, BB.charUtf8 ',', BB.stringUtf8 $ show red, BB.charUtf8 ',', BB.stringUtf8 $ show x,  BB.charUtf8 ',', BB.stringUtf8 $ show y,  BB.charUtf8 ',',  BB.stringUtf8 $ show  z,  BB.charUtf8 ',', BB.stringUtf8 $ show t1, BB.charUtf8 ',', BB.stringUtf8 $ show t2, BB.charUtf8 '\n']
 
 
 rebuildTimestamps :: Int64 -> [InputFrame a] -> [OutputFrame a]
