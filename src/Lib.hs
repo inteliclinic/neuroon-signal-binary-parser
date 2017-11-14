@@ -16,6 +16,7 @@ import Data.ByteString.Builder (Builder)
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.ByteString.Lazy.Search as BLS
 import qualified Data.ByteString.Lazy.Char8 as BC
+import Control.Arrow (first)
 import System.IO
 import System.Environment
 import Data.Monoid ((<>))
@@ -81,28 +82,25 @@ patToCsv (MkOutputFrame ts (MkPatFrame ir red (x, y, z) (t1, t2))) =
            commaAndStringBuilder x,  commaAndStringBuilder y,  commaAndStringBuilder  z,
            commaAndStringBuilder t1, commaAndStringBuilder t2, BB.charUtf8 '\n']
 
-  
 rebuildTimestamps :: Int64 -> [InputFrame a] -> [OutputFrame a]
 rebuildTimestamps _  [] = []
-rebuildTimestamps ts ((MkInputFrame delta0 fr) : frs) =
+rebuildTimestamps ts (MkInputFrame delta0 fr : frs) =
   let diff = (ts - fromIntegral delta0)
-  in (MkOutputFrame ts fr) : rebuildRest diff frs
+  in MkOutputFrame ts fr : rebuildRest diff frs
   where
     rebuildRest diff = map (\(MkInputFrame delta fr') ->
                               MkOutputFrame (diff + fromIntegral delta) fr')
 
-
 getStartTimestampFromCsv :: ByteString -> Int64
 getStartTimestampFromCsv bts =
   let table = map (BC.split ',') $ BC.lines bts
-      valueMap = zip (table !! 0) (table !! 1)
-      timestampBts = snd $ head $ filter (isJust . fst) $ map (\(k,v) -> (findSubstring "starttimestamp" k, v)) valueMap
-  in read $ BC.unpack $ timestampBts
+      valueMap = zip (head table) (table !! 1)
+      timestampBts = snd $ head $ filter (isJust . fst) $ map (first (findSubstring "StartDate")) valueMap
+  in read $ BC.unpack timestampBts
   where
     findSubstring pat bts' = let (before, rest) = BLS.breakOn pat bts'
                             in if BL.length rest == 0 then Nothing
                                else Just $ BL.length before
-
 
 parseProgram :: IO ()
 parseProgram = do
@@ -111,7 +109,7 @@ parseProgram = do
   -- testTimestamp <- (read <$> getLine) :: IO Word64
   testTimestamp <- getStartTimestampFromCsv <$> BC.readFile (args !! 2)
 
-  eegFrames <- rebuildTimestamps testTimestamp . parseEegFrames <$> BL.readFile (args !! 0)
+  eegFrames <- rebuildTimestamps testTimestamp . parseEegFrames <$> BL.readFile (head args)
   patFrames <- rebuildTimestamps testTimestamp . parsePatFrames <$> BL.readFile (args !! 1)
 
   eegWriteHandle <- openWriteHandle (args !! 3)
@@ -123,7 +121,6 @@ parseProgram = do
       openWriteHandle fname = do
         h <- openFile fname WriteMode
         hSetBuffering h LineBuffering --(BlockBuffering Nothing)
-        -- hSetBinaryMode h True
         return h
 
       parseEegFrames = map decode . chunked 20
