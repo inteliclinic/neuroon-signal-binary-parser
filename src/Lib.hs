@@ -6,6 +6,8 @@
 module Lib where
 
 import Data.Int
+import Data.List
+import Data.Maybe (catMaybes)
 import qualified Data.Vector.Unboxed as VU
 import Data.Binary
 import Data.Maybe (isJust)
@@ -16,16 +18,20 @@ import Data.ByteString.Builder (Builder)
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.ByteString.Lazy.Search as BLS
 import qualified Data.ByteString.Lazy.Char8 as BC
+import Control.Monad (filterM)
 import Control.Arrow (first)
 import System.IO
 import System.Environment
 import Data.Monoid ((<>))
+import System.Directory
 import GHC.Generics (Generic)
+import System.FilePath
+import Control.Concurrent.Async (mapConcurrently_)
 
 
 newtype EegFrame = MkEegFrame {
   samples :: VU.Vector Int16 }
-              deriving(Eq, Read, Show, Generic)
+              deriving(Eq)
 
 instance Binary EegFrame where
   get = MkEegFrame <$> VU.replicateM 8 getInt16le
@@ -37,7 +43,7 @@ data PatFrame = MkPatFrame {
   redLed :: Int32,
   accelerometer :: (Int16, Int16, Int16),
   termometer :: (Word8, Word8)
-} deriving(Eq, Read, Show)
+} deriving(Eq)
 
 instance Binary PatFrame where
   put (MkPatFrame ir red (x, y, z) (t1, t2)) = put ir *> put red *> put x *> put y *> put z *> put t1 *> put t2
@@ -53,11 +59,6 @@ data OutputFrame a = MkOutputFrame Int64 a
 
 instance Binary a => Binary (OutputFrame a)
 
-chunked :: Int64 -> ByteString -> [ByteString]
-chunked n bs
-  | BL.length bs < n = []
-  | otherwise       = let (chunk,rest) = BL.splitAt n bs
-                      in chunk : chunked n rest
 
 stringBuilder :: Show a => a -> Builder
 stringBuilder = BB.stringUtf8 . show
@@ -67,7 +68,7 @@ commaAndStringBuilder str = BB.charUtf8 ',' <> stringBuilder str
 
 eegToCsv :: OutputFrame EegFrame -> Builder
 eegToCsv (MkOutputFrame ts (MkEegFrame frs)) = VU.foldl buildLine mempty (VU.zip frameTimestamps frs)
-  where buildLine acc (a, b) = acc <> BB.charUtf8 '\n' <> stringBuilder (ts+a) <> commaAndStringBuilder b
+  where buildLine acc (a, b) = acc <> BB.charUtf8 '\n' <> stringBuilder (ts+1000*a) <> commaAndStringBuilder b
         frameTimestamps = VU.enumFromStepN 0 8 56
 
 eegCsvHeader :: Builder
@@ -78,9 +79,9 @@ patCsvHeader = BB.byteString "timestamp,ir_led,red_led,accel_x,accel_y,accel_z,t
 
 patToCsv :: OutputFrame PatFrame -> Builder
 patToCsv (MkOutputFrame ts (MkPatFrame ir red (x, y, z) (t1, t2))) =
-  mconcat [stringBuilder ts, commaAndStringBuilder ir, commaAndStringBuilder red,
+  mconcat [BB.charUtf8 '\n', stringBuilder ts, commaAndStringBuilder ir, commaAndStringBuilder red,
            commaAndStringBuilder x,  commaAndStringBuilder y,  commaAndStringBuilder  z,
-           commaAndStringBuilder t1, commaAndStringBuilder t2, BB.charUtf8 '\n']
+           commaAndStringBuilder t1, commaAndStringBuilder t2]
 
 rebuildTimestamps :: Int64 -> [InputFrame a] -> [OutputFrame a]
 rebuildTimestamps _  [] = []
@@ -102,26 +103,112 @@ getStartTimestampFromCsv bts =
                             in if BL.length rest == 0 then Nothing
                                else Just $ BL.length before
 
+
+data StreamInfo = EegStream | PatStream | Metadata
+  deriving(Eq, Read, Show)
+
+data FileInfo = MkFileInfo{ origName :: String, trialName :: String, dateString :: String, streamInfo :: StreamInfo, isSham :: Bool}
+  deriving(Eq, Read, Show)
+
+splitOn :: String -> String -> [String]
+splitOn delims str = reverse $ worker [] "" str
+  where worker acc curr []    = reverse curr : acc
+        worker acc curr (n:r) = if n `elem` delims
+                                then if curr /= "" then
+                                       worker (reverse curr:acc) "" r
+                                     else
+                                       worker acc "" r
+                                else
+                                  worker acc (n : curr) r
+
+
+parseFileInfo :: FilePath -> Maybe FileInfo
+parseFileInfo str = parseFname (takeFileName str) (splitOn "-" (takeBaseName str ++ "-dummy"))
+
+  where parseStream s
+          | "eegstream"      `isInfixOf` s = Just EegStream
+          | "patstream"      `isInfixOf` s = Just PatStream
+          | "metadata" `isInfixOf` s = Just Metadata
+          | otherwise                = Nothing
+
+        parseFname :: String -> [String] -> Maybe FileInfo
+        parseFname originalName (tname : dateStr : si : shamI : _) = do
+          sInfo <- parseStream si
+          let shamInfo = "sham" `isInfixOf` shamI
+          return $ MkFileInfo originalName tname dateStr sInfo shamInfo
+        parseFname _ _ = Nothing
+
+
 parseProgram :: IO ()
 parseProgram = do
+
   args <- getArgs
+  if length args == 0
+    then processCurrentDirectory
+    else if length args == 5
+         then do
+            let [eegIn, patIn, metaIn, eegOut, patOut] = args
+            processTrial eegIn patIn metaIn eegOut patOut
+         else do
+            usage
+  where
 
-  -- testTimestamp <- (read <$> getLine) :: IO Word64
-  testTimestamp <- getStartTimestampFromCsv <$> BC.readFile (args !! 2)
+    usage = do
+      putStrLn "Need 5 or 0 arguments. [TODO]"
 
-  eegFrames <- rebuildTimestamps testTimestamp . parseEegFrames <$> BL.readFile (head args)
-  patFrames <- rebuildTimestamps testTimestamp . parsePatFrames <$> BL.readFile (args !! 1)
+    processCurrentDirectory  = do
+      files <- getCurrentDirectory >>= getDirectoryContents >>= filterM (\x -> (not ("." `isPrefixOf` x) &&) <$> doesFileExist x)
+      let fileInfos = catMaybes $ map parseFileInfo files
+          fileGroups = groupBy (\a b -> dateString a == dateString b) fileInfos
+      mapConcurrently_ processGroup fileGroups
 
-  eegWriteHandle <- openWriteHandle (args !! 3)
-  patWriteHandle <- openWriteHandle (args !! 4)
-  BB.hPutBuilder eegWriteHandle (mconcat $ eegCsvHeader : map eegToCsv eegFrames)
-  BB.hPutBuilder patWriteHandle (mconcat $ patCsvHeader : map patToCsv patFrames)
+      where
+        processGroup :: [FileInfo] -> IO ()
+        processGroup grp = case adjustGroup grp of
+          Nothing -> do
+            putStr "Invalid group of files: "
+            print grp
+          Just (e, p, m) -> let (eegOut, patOut) = outputNames e
+                            in processTrial (origName e) (origName p) (origName m) eegOut patOut
 
-    where
-      openWriteHandle fname = do
-        h <- openFile fname WriteMode
-        hSetBuffering h LineBuffering --(BlockBuffering Nothing)
-        return h
+        outputNames :: FileInfo -> (FilePath, FilePath)
+        outputNames (MkFileInfo _ tname dateStr _ sham) =
+          ( tname ++ "-" ++ dateStr ++ "-eegcsv" ++ (if sham then "-sham-" else "-") ++ "out.csv"
+          , tname ++ "-" ++ dateStr ++ "-patcsv" ++ (if sham then "-sham-" else "-") ++ "out.csv")
 
-      parseEegFrames = map decode . chunked 20
-      parsePatFrames = map decode . chunked 20
+        adjustGroup :: [FileInfo] -> Maybe (FileInfo,FileInfo,FileInfo)
+        adjustGroup xs = do
+          a <- safeHead $ filter ((==) EegStream . streamInfo) xs
+          b <- safeHead $ filter ((==) PatStream . streamInfo) xs
+          c <- safeHead $ filter ((==) Metadata  . streamInfo) xs
+          return (a,b,c)
+
+        safeHead []    = Nothing
+        safeHead (x:_) = Just x
+
+    processTrial eegIn patIn metaIn eegOut patOut = do
+
+      testTimestamp <- getStartTimestampFromCsv <$> BC.readFile metaIn
+
+      eegFrames <- rebuildTimestamps testTimestamp . parseEegFrames <$> BL.readFile eegIn
+      patFrames <- rebuildTimestamps testTimestamp . parsePatFrames <$> BL.readFile patIn
+
+      eegWriteHandle <- openWriteHandle eegOut
+      patWriteHandle <- openWriteHandle patOut
+      BB.hPutBuilder eegWriteHandle (mconcat $ eegCsvHeader : map eegToCsv eegFrames)
+      BB.hPutBuilder patWriteHandle (mconcat $ patCsvHeader : map patToCsv patFrames)
+
+        where
+          openWriteHandle fname = do
+            h <- openFile fname WriteMode
+            hSetBuffering h LineBuffering --(BlockBuffering Nothing)
+            return h
+
+          parseEegFrames = map decode . chunked 20
+          parsePatFrames = map decode . chunked 20
+
+          chunked :: Int64 -> ByteString -> [ByteString]
+          chunked n bs
+            | BL.length bs < n = []
+            | otherwise       = let (chunk,rest) = BL.splitAt n bs
+                                in chunk : chunked n rest
