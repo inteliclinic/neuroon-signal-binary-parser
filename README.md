@@ -7,24 +7,24 @@ Project is implemented in Haskell
 
 1. Clone repository
 
-```
-git clone git@gitlab.local.inteliclinic.pl:apps/research-app-signal-stream-parser
-```
-You may need to install your public ssh key in Gitlab.
+    ```
+    git clone git@gitlab.local.inteliclinic.pl:apps/research-app-signal-stream-parser
+    ```
+    You may need to install your public ssh key in Gitlab.
 
 2. Get haskell stack tool.
 
-```
-   curl -sSL https://get.haskellstack.org/ | sh
-```
-or use your OS package manager.
+    ```
+      curl -sSL https://get.haskellstack.org/ | sh
+    ```
+    or use your OS package manager.
 
 3. Build & install using stack
 
-```
-   cd reserach-app-signal-stream-parser
-   stack install
-```
+    ```
+      cd reserach-app-signal-stream-parser
+      stack install
+    ```
 
 4. Parser should be installed in some directory linked to your $PATH variable such as: ~/.local/bin
 
