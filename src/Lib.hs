@@ -7,10 +7,9 @@ module Lib where
 
 import Data.Int
 import Data.List
-import Data.Maybe (catMaybes)
+import Data.Maybe (isJust, mapMaybe)
 import qualified Data.Vector.Unboxed as VU
 import Data.Binary
-import Data.Maybe (isJust)
 import Data.Binary.Get
 import Data.ByteString.Lazy (ByteString)
 import qualified Data.ByteString.Builder as BB
@@ -18,6 +17,7 @@ import Data.ByteString.Builder (Builder)
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.ByteString.Lazy.Search as BLS
 import qualified Data.ByteString.Lazy.Char8 as BC
+import Data.Function (on)
 import Control.Monad (filterM)
 import Control.Arrow (first)
 import System.IO
@@ -126,40 +126,34 @@ parseFileInfo :: FilePath -> Maybe FileInfo
 parseFileInfo str = parseFname (takeFileName str) (splitOn "-" (takeBaseName str ++ "-dummy"))
 
   where parseStream s
-          | "eegstream"      `isInfixOf` s = Just EegStream
-          | "patstream"      `isInfixOf` s = Just PatStream
-          | "metadata" `isInfixOf` s = Just Metadata
-          | otherwise                = Nothing
+          | "eegstream" `isInfixOf` s = Just EegStream
+          | "patstream" `isInfixOf` s = Just PatStream
+          | "metadata"  `isInfixOf` s = Just Metadata
+          | otherwise                 = Nothing
 
         parseFname :: String -> [String] -> Maybe FileInfo
         parseFname originalName (tname : dateStr : si : shamI : _) = do
           sInfo <- parseStream si
-          let shamInfo = "sham" `isInfixOf` shamI
-          return $ MkFileInfo originalName tname dateStr sInfo shamInfo
+          return $ MkFileInfo originalName tname dateStr sInfo ("sham" `isInfixOf` shamI)
         parseFname _ _ = Nothing
-
 
 parseProgram :: IO ()
 parseProgram = do
 
   args <- getArgs
-  if length args == 0
+  if null args
     then processCurrentDirectory
     else if length args == 5
          then do
             let [eegIn, patIn, metaIn, eegOut, patOut] = args
             processTrial eegIn patIn metaIn eegOut patOut
-         else do
-            usage
+         else putStrLn "Need 5 or 0 arguments. [TODO]"
   where
-
-    usage = do
-      putStrLn "Need 5 or 0 arguments. [TODO]"
 
     processCurrentDirectory  = do
       files <- getCurrentDirectory >>= getDirectoryContents >>= filterM (\x -> (not ("." `isPrefixOf` x) &&) <$> doesFileExist x)
-      let fileInfos = catMaybes $ map parseFileInfo files
-          fileGroups = groupBy (\a b -> dateString a == dateString b) fileInfos
+      let fileInfos = mapMaybe parseFileInfo files
+          fileGroups = groupBy ((==) `on` dateString) fileInfos
       mapConcurrently_ processGroup fileGroups
 
       where
@@ -201,7 +195,7 @@ parseProgram = do
         where
           openWriteHandle fname = do
             h <- openFile fname WriteMode
-            hSetBuffering h LineBuffering --(BlockBuffering Nothing)
+            hSetBuffering h LineBuffering
             return h
 
           parseEegFrames = map decode . chunked 20
