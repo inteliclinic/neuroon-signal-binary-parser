@@ -1,7 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE StrictData #-}
-{-# LANGUAGE DeriveGeneric #-}
 
 module Lib where
 
@@ -24,7 +23,6 @@ import System.IO
 import System.Environment
 import Data.Monoid ((<>))
 import System.Directory
-import GHC.Generics (Generic)
 import System.FilePath
 import Control.Concurrent.Async (mapConcurrently_)
 
@@ -36,7 +34,6 @@ newtype EegFrame = MkEegFrame {
 instance Binary EegFrame where
   get = MkEegFrame <$> VU.replicateM 8 getInt16le
   put eegFrame = VU.mapM_ put (samples eegFrame)
-
 
 data PatFrame = MkPatFrame {
   irLed  :: Int32,
@@ -50,14 +47,14 @@ instance Binary PatFrame where
   get = MkPatFrame <$> getInt32le <*> getInt32le <*> ((,,) <$> getInt16le <*> getInt16le <*> getInt16le) <*> ((,) <$> get <*> get)
 
 data InputFrame a = MkInputFrame Word32 a
-  deriving(Eq, Read, Show, Generic)
+  deriving(Eq, Read, Show)
 
-instance Binary a => Binary (InputFrame a)
+instance (Binary a) => Binary (InputFrame a) where
+  get = MkInputFrame <$> getWord32le <*> get
+  put (MkInputFrame ts eegFrame) = put ts *> put eegFrame
 
 data OutputFrame a = MkOutputFrame Int64 a
-  deriving(Eq, Read, Show, Generic)
-
-instance Binary a => Binary (OutputFrame a)
+  deriving(Eq, Read, Show)
 
 
 stringBuilder :: Show a => a -> Builder
@@ -86,11 +83,11 @@ patToCsv (MkOutputFrame ts (MkPatFrame ir red (x, y, z) (t1, t2))) =
 rebuildTimestamps :: Int64 -> [InputFrame a] -> [OutputFrame a]
 rebuildTimestamps _  [] = []
 rebuildTimestamps ts (MkInputFrame delta0 fr : frs) =
-  let diff = (ts - fromIntegral delta0)
+  let diff = (ts - 1000 * fromIntegral delta0)
   in MkOutputFrame ts fr : rebuildRest diff frs
   where
     rebuildRest diff = map (\(MkInputFrame delta fr') ->
-                              MkOutputFrame (diff + fromIntegral delta) fr')
+                              MkOutputFrame (diff + 1000 * fromIntegral delta) fr')
 
 getStartTimestampFromCsv :: ByteString -> Int64
 getStartTimestampFromCsv bts =
@@ -138,22 +135,23 @@ parseFileInfo str = parseFname (takeFileName str) (splitOn "-" (takeBaseName str
         parseFname _ _ = Nothing
 
 parseProgram :: IO ()
-parseProgram = do
+parseProgram = getArgs >>= \args -> case length args of
+      5 -> do
+          let [eegIn, patIn, metaIn, eegOut, patOut] = args
+          processTrial eegIn patIn (Just metaIn) eegOut patOut
+      4 -> do
+          let [eegIn, patIn, eegOut, patOut] = args
+          processTrial eegIn patIn Nothing eegOut patOut
+      0 -> processCurrentDirectory
+      _ -> putStrLn "Need 5 or 0 arguments. [TODO]"
 
-  args <- getArgs
-  if null args
-    then processCurrentDirectory
-    else if length args == 5
-         then do
-            let [eegIn, patIn, metaIn, eegOut, patOut] = args
-            processTrial eegIn patIn metaIn eegOut patOut
-         else putStrLn "Need 5 or 0 arguments. [TODO]"
   where
 
     processCurrentDirectory  = do
       files <- getCurrentDirectory >>= getDirectoryContents >>= filterM (\x -> (not ("." `isPrefixOf` x) &&) <$> doesFileExist x)
       let fileInfos = mapMaybe parseFileInfo files
           fileGroups = groupBy ((==) `on` dateString) fileInfos
+      print fileGroups
       mapConcurrently_ processGroup fileGroups
 
       where
@@ -162,30 +160,34 @@ parseProgram = do
           Nothing -> do
             putStr "Invalid group of files: "
             print grp
-          Just (e, p, m) -> let (eegOut, patOut) = outputNames e
-                            in processTrial (origName e) (origName p) (origName m) eegOut patOut
+          Just as@(e, p, m) -> do
+            print as
+            let (eegOut, patOut) = outputNames e
+              in processTrial (origName e) (origName p) (origName <$> m) eegOut patOut
 
         outputNames :: FileInfo -> (FilePath, FilePath)
         outputNames (MkFileInfo _ tname dateStr _ sham) =
           ( tname ++ "-" ++ dateStr ++ "-eegcsv" ++ (if sham then "-sham-" else "-") ++ "out.csv"
           , tname ++ "-" ++ dateStr ++ "-patcsv" ++ (if sham then "-sham-" else "-") ++ "out.csv")
 
-        adjustGroup :: [FileInfo] -> Maybe (FileInfo,FileInfo,FileInfo)
+        adjustGroup :: [FileInfo] -> Maybe (FileInfo,FileInfo,Maybe FileInfo)
         adjustGroup xs = do
           a <- safeHead $ filter ((==) EegStream . streamInfo) xs
           b <- safeHead $ filter ((==) PatStream . streamInfo) xs
-          c <- safeHead $ filter ((==) Metadata  . streamInfo) xs
+          let c = safeHead $ filter ((==) Metadata  . streamInfo) xs
           return (a,b,c)
 
         safeHead []    = Nothing
         safeHead (x:_) = Just x
 
-    processTrial eegIn patIn metaIn eegOut patOut = do
+    processTrial eegIn patIn mMetaIn eegOut patOut = do
 
-      testTimestamp <- getStartTimestampFromCsv <$> BC.readFile metaIn
+      testTimestamp <- case mMetaIn of
+        Nothing     -> return 0
+        Just metaIn -> getStartTimestampFromCsv <$> BC.readFile metaIn
 
-      eegFrames <- rebuildTimestamps testTimestamp . parseEegFrames <$> BL.readFile eegIn
-      patFrames <- rebuildTimestamps testTimestamp . parsePatFrames <$> BL.readFile patIn
+      eegFrames <- rebuildTimestamps testTimestamp . parseEegFrames . fixBinaryReprFuckup <$> BL.readFile eegIn
+      patFrames <- rebuildTimestamps testTimestamp . parsePatFrames . fixBinaryReprFuckup <$> BL.readFile patIn
 
       eegWriteHandle <- openWriteHandle eegOut
       patWriteHandle <- openWriteHandle patOut
@@ -206,3 +208,16 @@ parseProgram = do
             | BL.length bs < n = []
             | otherwise       = let (chunk,rest) = BL.splitAt n bs
                                 in chunk : chunked n rest
+
+
+fixBinaryReprFuckup :: ByteString -> ByteString
+fixBinaryReprFuckup = BL.pack . VU.toList . btsToVector
+  where btsToVector :: ByteString -> VU.Vector Word8
+        btsToVector bts = let bs = BL.filter (\x -> 32 /= x && 10 /= x && 13 /= x) bts
+                  in VU.generate (fromIntegral (BL.length bs) `div` 2) $ \i -> 16 * adjustAscii (bs `BL.index` (fromIntegral (2*i))) + adjustAscii (bs `BL.index` (fromIntegral (2*i+1)))
+
+        adjustAscii :: Word8 -> Word8
+        adjustAscii c | c >= 65 && c <= 70  = let s = c - 55 in seq s s
+        adjustAscii c | c >= 97 && c <= 102 = let s = c - 87 in seq s s
+        adjustAscii c | c >= 48 && c <= 57  = let s = c - 48 in seq s s
+        adjustAscii _                       = error "ascii parsing"
