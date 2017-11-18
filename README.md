@@ -5,7 +5,7 @@ Project is implemented in Haskell - a modern purely functional programming langu
 
 ## Raison d'être
 
-New Neuroon's firmware allows to subscribe on 2 Bluetooth Low Energy notifications characteristics.
+New Neuroon's firmware allows to subscribe onto 2 Bluetooth Low Energy notifications characteristics.
 This characteristics' notifications deliver in real-time binary frames containing data from Neuroon's sensors.
 Some interface applications, suchs as Neuroon's Lucid Dreaming Research Application gather these
 streams of binary frames of data into files.
