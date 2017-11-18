@@ -22,7 +22,7 @@ Project is implemented in Haskell
 3. Build & install using stack
 
     ```
-      cd reserach-app-signal-stream-parser
+      cd research-app-signal-stream-parser
       stack install
     ```
 
@@ -30,16 +30,46 @@ Project is implemented in Haskell
 
 ## Usage
 
+### Specify input and output files
 Use it from command line like this:
 ```
-./NeuroonRawStreamParser-exe eeg_stream.bin pat_stream.bin metadata.csv out_eeg.csv out_pat.csv
+./NeuroonRawStreamParser-exe eeg_stream.bin pat_stream.bin metadata.csv(optional) out_eeg.csv out_pat.csv
 ```
-eeg_stream.bin - file containing binary frames from Neuroon's stream0
-pat_stream.bin - file containing binary frames from Neuroon's stream1
-metadata.csv   - file created by lucid dream research app containing starting timestamp.
+to parse Neuroon binary streams into two csv files.
+
+eeg_stream.bin - file containing binary frames from Neuroon's stream0 BLE characteristic
+pat_stream.bin - file containing binary frames from Neuroon's stream1 BLE characteristic
+metadata.csv   - (optional) file created by lucid dream research app containing starting timestamp,
+                 if not provided, the output files will use relative timestamp
 
 out_eeg.csv    - output file for csv containing eeg data
 out_pat.csv    - output file for csv containing pulsoxymeter, accelerometer and termometer data
+
+
+### Process entire directory
+To parse entire directory call the program without arguments. Parser will try to find groups of files describing
+Neuroon binary data and parse it to csv files.
+
+```
+./NeuroonRawStreamParser-exe
+```
+(This will process all directory, given that input files names follow structure described below:)
+
+Input files MUST be in the following format:
+    [name_group]-[date_string_group]-[stream_identifier_grou]-[sham and extension info]
+    
+Each group can't contain '-' character. Stream identifier should contain lowcase string:
+   - eegstream - to be read as eeg binary frames
+   - patstream - to be read as pulsoxymeter, accelerometer, temperature frames.
+   - metadata  - to be read as a file containing information about absolute time of recording start.
+
+
+## Special fix
+
+Eventually streams should be recorded as raw original bytes.
+But iOS app for Neuroon LD research saves their textual representation at the moment of writing this.
+This branch's contains parser that takes it into consideration and parses textual representation of textual data.
+If you are sure that this isn't correct behaviour try master branch.
 
 ## Contributing
 
