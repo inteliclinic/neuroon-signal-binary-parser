@@ -1,7 +1,16 @@
 # NeuroonRawStreamParsers
 
 Project containing simple provisional implementation of neuroon binary streams csv parsers.
-Project is implemented in Haskell
+Project is implemented in Haskell - a modern purely functional programming language.
+
+## Raison d'être
+
+New Neuroon's firmware allows to subscribe on 2 Bluetooth Low Energy notifications characteristics.
+This characteristics' notifications deliver in real-time binary frames containing data from Neuroon's sensors.
+Some interface applications, suchs as Neuroon's Lucid Dreaming Research Application gather these
+streams of binary frames of data into files.
+This repository contains program which when compiled, converts signals from sensors
+from binary frames format into common CSV.
 
 ## Installation
 
@@ -63,6 +72,10 @@ Each group can't contain '-' character. Stream identifier should contain lowcase
    - patstream - to be read as pulsoxymeter, accelerometer, temperature frames.
    - metadata  - to be read as a file containing information about absolute time of recording start.
 
+## TODO
+
+- Better input arguments structure.
+- Help messages.
 
 ## Special fix
 
