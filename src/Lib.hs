@@ -186,8 +186,8 @@ parseProgram = getArgs >>= \args -> case length args of
         Nothing     -> return 0
         Just metaIn -> getStartTimestampFromCsv <$> BC.readFile metaIn
 
-      eegFrames <- rebuildTimestamps testTimestamp . parseEegFrames . fixBinaryReprFuckup <$> BL.readFile eegIn
-      patFrames <- rebuildTimestamps testTimestamp . parsePatFrames . fixBinaryReprFuckup <$> BL.readFile patIn
+      eegFrames <- rebuildTimestamps testTimestamp . parseEegFrames <$> BL.readFile eegIn
+      patFrames <- rebuildTimestamps testTimestamp . parsePatFrames <$> BL.readFile patIn
 
       eegWriteHandle <- openWriteHandle eegOut
       patWriteHandle <- openWriteHandle patOut
@@ -208,16 +208,3 @@ parseProgram = getArgs >>= \args -> case length args of
             | BL.length bs < n = []
             | otherwise       = let (chunk,rest) = BL.splitAt n bs
                                 in chunk : chunked n rest
-
-
-fixBinaryReprFuckup :: ByteString -> ByteString
-fixBinaryReprFuckup = BL.pack . VU.toList . btsToVector
-  where btsToVector :: ByteString -> VU.Vector Word8
-        btsToVector bts = let bs = BL.filter (\x -> 32 /= x && 10 /= x && 13 /= x) bts
-                  in VU.generate (fromIntegral (BL.length bs) `div` 2) $ \i -> 16 * adjustAscii (bs `BL.index` (fromIntegral (2*i))) + adjustAscii (bs `BL.index` (fromIntegral (2*i+1)))
-
-        adjustAscii :: Word8 -> Word8
-        adjustAscii c | c >= 65 && c <= 70  = let s = c - 55 in seq s s
-        adjustAscii c | c >= 97 && c <= 102 = let s = c - 87 in seq s s
-        adjustAscii c | c >= 48 && c <= 57  = let s = c - 48 in seq s s
-        adjustAscii _                       = error "ascii parsing"

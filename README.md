@@ -64,13 +64,6 @@ Each group can't contain '-' character. Stream identifier should contain lowcase
    - metadata  - to be read as a file containing information about absolute time of recording start.
 
 
-## Special fix
-
-Eventually streams should be recorded as raw original bytes.
-But iOS app for Neuroon LD research saves their textual representation at the moment of writing this.
-This branch's contains parser that takes it into consideration and parses textual representation of textual data.
-If you are sure that this isn't correct behaviour try master branch.
-
 ## Contributing
 
 If think you can improve the way the parser works feel free to discuss it with authors or create a merge request.
