@@ -1,30 +1,41 @@
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE DuplicateRecordFields #-}
-{-# LANGUAGE StrictData #-}
+{-# LANGUAGE OverloadedStrings     #-}
+{-# LANGUAGE RankNTypes            #-}
+{-# LANGUAGE StrictData            #-}
 
-module Lib where
 
-import Data.Int
-import Data.List
-import Data.Maybe (isJust, mapMaybe)
-import qualified Data.Vector.Unboxed as VU
-import Data.Binary
-import Data.Binary.Get
-import Data.ByteString.Lazy (ByteString)
-import qualified Data.ByteString.Builder as BB
-import Data.ByteString.Builder (Builder)
-import qualified Data.ByteString.Lazy as BL
+module Lib(
+  parseProgram
+  ) where
+
+import           Control.Arrow               (first)
+import           Control.Concurrent          (forkIO)
+import           Control.Concurrent.Async    (mapConcurrently_)
+import           Control.Monad               (filterM, forever)
+import           Data.Binary
+import           Data.Binary.Get
+import           Data.ByteString.Builder     (Builder)
+import qualified Data.ByteString.Builder     as BB
+-- import           Data.ByteString.Lazy        (ByteString)
+
+
+import qualified Data.ByteString             as BS
+import qualified Data.ByteString.Lazy        as BL
+import qualified Data.ByteString.Lazy.Char8  as BC
 import qualified Data.ByteString.Lazy.Search as BLS
-import qualified Data.ByteString.Lazy.Char8 as BC
-import Data.Function (on)
-import Control.Monad (filterM)
-import Control.Arrow (first)
-import System.IO
-import System.Environment
-import Data.Monoid ((<>))
-import System.Directory
-import System.FilePath
-import Control.Concurrent.Async (mapConcurrently_)
+import           Data.Function               (on)
+import           Data.Int
+import           Data.List
+import           Data.Maybe                  (isJust, mapMaybe)
+import           Data.Monoid                 ((<>))
+import qualified Data.Vector.Unboxed         as VU
+import           Pipes
+import qualified Pipes.ByteString            as P
+import qualified Pipes.Prelude               as PP
+import           System.Directory
+import           System.Environment
+import           System.FilePath
+import           System.IO
 
 
 newtype EegFrame = MkEegFrame {
@@ -36,10 +47,10 @@ instance Binary EegFrame where
   put eegFrame = VU.mapM_ put (samples eegFrame)
 
 data PatFrame = MkPatFrame {
-  irLed  :: Int32,
-  redLed :: Int32,
+  irLed         :: Int32,
+  redLed        :: Int32,
   accelerometer :: (Int16, Int16, Int16),
-  termometer :: (Word8, Word8)
+  termometer    :: (Word8, Word8)
 } deriving(Eq)
 
 instance Binary PatFrame where
@@ -80,16 +91,7 @@ patToCsv (MkOutputFrame ts (MkPatFrame ir red (x, y, z) (t1, t2))) =
            commaAndStringBuilder x,  commaAndStringBuilder y,  commaAndStringBuilder  z,
            commaAndStringBuilder t1, commaAndStringBuilder t2]
 
-rebuildTimestamps :: Int64 -> [InputFrame a] -> [OutputFrame a]
-rebuildTimestamps _  [] = []
-rebuildTimestamps ts (MkInputFrame delta0 fr : frs) =
-  let diff = (ts - 1000 * fromIntegral delta0)
-  in MkOutputFrame ts fr : rebuildRest diff frs
-  where
-    rebuildRest diff = map (\(MkInputFrame delta fr') ->
-                              MkOutputFrame (diff + 1000 * fromIntegral delta) fr')
-
-getStartTimestampFromCsv :: ByteString -> Int64
+getStartTimestampFromCsv :: BC.ByteString -> Int64
 getStartTimestampFromCsv bts =
   let table = map (BC.split ',') $ BC.lines bts
       valueMap = zip (head table) (table !! 1)
@@ -138,10 +140,10 @@ parseProgram :: IO ()
 parseProgram = getArgs >>= \args -> case length args of
       5 -> do
           let [eegIn, patIn, metaIn, eegOut, patOut] = args
-          processTrial eegIn patIn (Just metaIn) eegOut patOut
+          processTrialPipes eegIn patIn (Just metaIn) eegOut patOut
       4 -> do
           let [eegIn, patIn, eegOut, patOut] = args
-          processTrial eegIn patIn Nothing eegOut patOut
+          processTrialPipes eegIn patIn Nothing eegOut patOut
       0 -> processCurrentDirectory
       _ -> putStrLn "Need 5 or 0 arguments. [TODO]"
 
@@ -163,7 +165,7 @@ parseProgram = getArgs >>= \args -> case length args of
           Just as@(e, p, m) -> do
             print as
             let (eegOut, patOut) = outputNames e
-              in processTrial (origName e) (origName p) (origName <$> m) eegOut patOut
+              in processTrialPipes (origName e) (origName p) (origName <$> m) eegOut patOut
 
         outputNames :: FileInfo -> (FilePath, FilePath)
         outputNames (MkFileInfo _ tname dateStr _ sham) =
@@ -180,44 +182,44 @@ parseProgram = getArgs >>= \args -> case length args of
         safeHead []    = Nothing
         safeHead (x:_) = Just x
 
-    processTrial eegIn patIn mMetaIn eegOut patOut = do
+    processTrialPipes eegIn patIn mMetaIn eegOut patOut = do
 
-      testTimestamp <- case mMetaIn of
+      startTs <- case mMetaIn of
         Nothing     -> return 0
         Just metaIn -> getStartTimestampFromCsv <$> BC.readFile metaIn
 
-      eegFrames <- rebuildTimestamps testTimestamp . parseEegFrames . fixBinaryReprFuckup <$> BL.readFile eegIn
-      patFrames <- rebuildTimestamps testTimestamp . parsePatFrames . fixBinaryReprFuckup <$> BL.readFile patIn
-
-      eegWriteHandle <- openWriteHandle eegOut
-      patWriteHandle <- openWriteHandle patOut
-      BB.hPutBuilder eegWriteHandle (mconcat $ eegCsvHeader : map eegToCsv eegFrames)
-      BB.hPutBuilder patWriteHandle (mconcat $ patCsvHeader : map patToCsv patFrames)
+      _ <-forkIO $ parseFrames startTs eegIn eegOut eegToCsv eegCsvHeader
+      parseFrames startTs patIn patOut patToCsv patCsvHeader
 
         where
-          openWriteHandle fname = do
-            h <- openFile fname WriteMode
-            hSetBuffering h LineBuffering
-            return h
+          parseFrames startTs fIn fOut parseF header = withFile fIn ReadMode  $ \hIn  ->
+            withFile fOut WriteMode $ \hOut -> do
+              hSetBuffering hOut LineBuffering
+              BB.hPutBuilder hOut header
+              runEffect $ P.hGet 20 hIn >-> decodeBinaryFrame >-> rebuildTimestampsPipe startTs >-> PP.map parseF >-> PP.mapM_ (BB.hPutBuilder hOut)
+              -- runEffect $ P.chunksOf' (20 :: Int) (P.fromHandle hIn) >-> decodeBinaryFrame >-> rebuildTimestampsPipe startTs >-> PP.map parseF >-> PP.mapM_ (BB.hPutBuilder hOut)
+              -- runEffect $ P.chunksOf' (20 :: Int) (P.fromHandle hIn >-> PP.map fixBinaryReprFuckup) >-> decodeBinaryFrame >-> rebuildTimestampsPipe startTs >-> PP.map parseF >-> PP.mapM_ (BB.hPutBuilder hOut)
 
-          parseEegFrames = map decode . chunked 20
-          parsePatFrames = map decode . chunked 20
+          decodeBinaryFrame :: forall m a. (Monad m, Binary a) => Pipe P.ByteString (InputFrame a) m ()
+          decodeBinaryFrame = forever $ await >>= yield . decode . BC.fromStrict
 
-          chunked :: Int64 -> ByteString -> [ByteString]
-          chunked n bs
-            | BL.length bs < n = []
-            | otherwise       = let (chunk,rest) = BL.splitAt n bs
-                                in chunk : chunked n rest
+          rebuildTimestampsPipe :: forall m a. (Monad m) => Int64 -> Pipe (InputFrame a) (OutputFrame a) m ()
+          rebuildTimestampsPipe ts = do
+            (MkInputFrame delta0 fr) <- await
+            let diff = (ts - 1000 * fromIntegral delta0)
+            yield $ MkOutputFrame ts fr
+            forever $ do
+              (MkInputFrame delta fr') <- await
+              yield $ MkOutputFrame (diff + 1000 * fromIntegral delta) fr'
 
-
-fixBinaryReprFuckup :: ByteString -> ByteString
-fixBinaryReprFuckup = BL.pack . VU.toList . btsToVector
-  where btsToVector :: ByteString -> VU.Vector Word8
-        btsToVector bts = let bs = BL.filter (\x -> 32 /= x && 10 /= x && 13 /= x) bts
-                  in VU.generate (fromIntegral (BL.length bs) `div` 2) $ \i -> 16 * adjustAscii (bs `BL.index` (fromIntegral (2*i))) + adjustAscii (bs `BL.index` (fromIntegral (2*i+1)))
+fixBinaryReprFuckup :: P.ByteString -> P.ByteString
+fixBinaryReprFuckup = BS.pack . VU.toList . btsToVector
+  where btsToVector :: P.ByteString -> VU.Vector Word8
+        btsToVector bts = let bs = BS.filter (\x -> 32 /= x && 10 /= x && 13 /= x) bts
+                  in VU.generate (fromIntegral (BS.length bs) `div` 2) $ \i -> 16 * adjustAscii (bs `BS.index` (fromIntegral (2*i))) + adjustAscii (bs `BS.index` (fromIntegral (2*i+1)))
 
         adjustAscii :: Word8 -> Word8
         adjustAscii c | c >= 65 && c <= 70  = let s = c - 55 in seq s s
         adjustAscii c | c >= 97 && c <= 102 = let s = c - 87 in seq s s
         adjustAscii c | c >= 48 && c <= 57  = let s = c - 48 in seq s s
-        adjustAscii _                       = error "ascii parsing"
+        adjustAscii c = c
