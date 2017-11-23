@@ -127,7 +127,7 @@ parseFileInfo str = parseFname (takeFileName str) (splitOn "-" (takeBaseName str
         parseFname :: String -> [String] -> Maybe FileInfo
         parseFname originalName (tname : dateStr : si : shamI : _) = do
           sInfo <- parseStream si
-          return $ MkFileInfo originalName tname dateStr sInfo ("sham" `isInfixOf` shamI)
+          return $ MkFileInfo originalName tname dateStr sInfo ("sham" `isInfixOf` shamI && not ("nosham" `isInfixOf` shamI))
         parseFname _ _ = Nothing
 
 parseProgram :: IO ()
