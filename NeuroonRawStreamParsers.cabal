@@ -30,8 +30,8 @@ library
                      , pipes-bytestring
   default-language:    Haskell2010
 
-  if flag(dump)
-    ghc-options: -ddump-simpl -ddump-stg -ddump-to-file
+  -- if flag(dump)
+  --   ghc-options: -ddump-simpl -ddump-stg -ddump-to-file
 
 executable NeuroonRawStreamParsers-exe
   hs-source-dirs:      app

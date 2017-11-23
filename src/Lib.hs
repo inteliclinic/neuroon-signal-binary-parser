@@ -9,9 +9,8 @@ module Lib(
   ) where
 
 import           Control.Arrow               (first)
-import           Control.Concurrent          (forkIO)
-import           Control.Concurrent.Async    (mapConcurrently_)
-import           Control.Monad               (filterM, forever)
+import           Control.Concurrent.Async    (mapConcurrently_, concurrently)
+import           Control.Monad               (filterM, forever, when)
 import           Data.Binary
 import           Data.Binary.Get
 import           Data.ByteString.Builder     (Builder)
@@ -62,7 +61,7 @@ data InputFrame a = MkInputFrame Word32 a
 
 instance (Binary a) => Binary (InputFrame a) where
   get = MkInputFrame <$> getWord32le <*> get
-  put (MkInputFrame ts eegFrame) = put ts *> put eegFrame
+  put (MkInputFrame ts fr) = put ts *> put fr
 
 data OutputFrame a = MkOutputFrame Int64 a
   deriving(Eq, Read, Show)
@@ -77,7 +76,7 @@ commaAndStringBuilder str = BB.charUtf8 ',' <> stringBuilder str
 eegToCsv :: OutputFrame EegFrame -> Builder
 eegToCsv (MkOutputFrame ts (MkEegFrame frs)) = VU.foldl buildLine mempty (VU.zip frameTimestamps frs)
   where buildLine acc (a, b) = acc <> BB.charUtf8 '\n' <> stringBuilder (ts+1000*a) <> commaAndStringBuilder b
-        frameTimestamps = VU.enumFromStepN 0 8 56
+        frameTimestamps = VU.enumFromStepN 0 8 8
 
 eegCsvHeader :: Builder
 eegCsvHeader = BB.byteString "timestamp,signal"
@@ -188,15 +187,21 @@ parseProgram = getArgs >>= \args -> case length args of
         Nothing     -> return 0
         Just metaIn -> getStartTimestampFromCsv <$> BC.readFile metaIn
 
-      _ <-forkIO $ parseFrames startTs eegIn eegOut eegToCsv eegCsvHeader
-      parseFrames startTs patIn patOut patToCsv patCsvHeader
+      _ <- concurrently
+        (parseFrames startTs eegIn eegOut eegToCsv eegCsvHeader)
+        (parseFrames startTs patIn patOut patToCsv patCsvHeader)
+
+      return()
 
         where
-          parseFrames startTs fIn fOut parseF header = withFile fIn ReadMode  $ \hIn  ->
+          parseFrames startTs fIn fOut parseF header = withFile fIn ReadMode  $ \hIn  -> do
+            hSetBinaryMode hIn True
+            hSetBuffering hIn (BlockBuffering (Just 20))
             withFile fOut WriteMode $ \hOut -> do
               hSetBuffering hOut LineBuffering
               BB.hPutBuilder hOut header
               runEffect $ P.hGet 20 hIn >-> decodeBinaryFrame >-> rebuildTimestampsPipe startTs >-> PP.map parseF >-> PP.mapM_ (BB.hPutBuilder hOut)
+              -- where tempPrint bf del = PP.mapM (\b -> when (True) (putStr bf *> print (BS.length b) *> putStr del) *> return b)
               -- runEffect $ P.chunksOf' (20 :: Int) (P.fromHandle hIn) >-> decodeBinaryFrame >-> rebuildTimestampsPipe startTs >-> PP.map parseF >-> PP.mapM_ (BB.hPutBuilder hOut)
               -- runEffect $ P.chunksOf' (20 :: Int) (P.fromHandle hIn >-> PP.map fixBinaryReprFuckup) >-> decodeBinaryFrame >-> rebuildTimestampsPipe startTs >-> PP.map parseF >-> PP.mapM_ (BB.hPutBuilder hOut)
 
