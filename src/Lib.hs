@@ -10,14 +10,11 @@ module Lib(
 
 import           Control.Arrow               (first)
 import           Control.Concurrent.Async    (mapConcurrently_, concurrently)
-import           Control.Monad               (filterM, forever, when)
+import           Control.Monad               (filterM, forever)
 import           Data.Binary
 import           Data.Binary.Get
 import           Data.ByteString.Builder     (Builder)
 import qualified Data.ByteString.Builder     as BB
--- import           Data.ByteString.Lazy        (ByteString)
-
-
 import qualified Data.ByteString             as BS
 import qualified Data.ByteString.Lazy        as BL
 import qualified Data.ByteString.Lazy.Char8  as BC
@@ -187,11 +184,9 @@ parseProgram = getArgs >>= \args -> case length args of
         Nothing     -> return 0
         Just metaIn -> getStartTimestampFromCsv <$> BC.readFile metaIn
 
-      _ <- concurrently
+      void $ concurrently
         (parseFrames startTs eegIn eegOut eegToCsv eegCsvHeader)
         (parseFrames startTs patIn patOut patToCsv patCsvHeader)
-
-      return()
 
         where
           parseFrames startTs fIn fOut parseF header = withFile fIn ReadMode  $ \hIn  -> do
