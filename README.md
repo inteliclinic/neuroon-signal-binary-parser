@@ -1,16 +1,17 @@
 # NeuroonRawStreamParsers
 
-Project containing simple provisional implementation of neuroon binary streams csv parsers.
+Project containing simple implementation of neuroon binary streams csv parsers.
 Project is implemented in Haskell - a modern purely functional programming language.
 
 ## Raison d'être
 
-New Neuroon's firmware allows to subscribe onto 2 Bluetooth Low Energy notifications characteristics.
-This characteristics' notifications deliver in real-time binary frames containing data from Neuroon's sensors.
-Some interface applications, suchs as Neuroon's Lucid Dreaming Research Application gather these
-streams of binary frames of data into files.
-This repository contains program which when compiled, converts signals from sensors
-from binary frames format into common CSV.
+New Neuroon's firmware allows to subscribe onto 2 Bluetooth Low Energy 
+notifications characteristics. This characteristics' notifications deliver
+in real-time binary frames containing data from Neuroon's sensors.
+Some interface applications, suchs as Neuroon's Lucid Dreaming Research Application
+gather these streams of binary frames of data into files.
+This repository contains a program which when compiled, converts signals from 
+sensors from binary frames format into common CSV.
 
 ## Installation
 
@@ -37,9 +38,33 @@ from binary frames format into common CSV.
 
 4. Parser should be installed in some directory linked to your $PATH variable such as: ~/.local/bin
 
+## Neuroon's binary data frame format
+
+Neuroon's firmware produces two distinct binary frames streams and outputs them 
+via BLE characteristics. Each stream's frame consists of 20 bytes.
+First stream describes EEG signal in the following format:
+- 4 bytes (unsigned int 32)   -> number of 1/1024th of a second since the mask was turned on.
+                                 Currently eeg is sampled at 128hz which means that consecutive frames
+                                 will have timestamps differring by 64.
+- 8 x 2 bytes (signed int 16) -> 8 last samples of eeg gathered.
+
+Seconds stream describes so called PAT(pulsoxymeter, accelerometer & termometer) frames in the following format:
+- 4 bytes (unsigned int 32)   -> number of 1/1024th of a second since the mask was turned on.
+                                 Pulsoxymeter and accelerometers are sampled at 32hz (termometer samples
+                                 are padded with previously sampled values) which means that consecutive frames
+                                 will have timestamps differring by 32.
+- 4 bytes (signed int 32)     -> sample from infra-red LED diod
+- 4 bytes (signed int 32)     -> sample from red-red LED diod
+- 3 x 2 bytes (signed int 16) -> 3 axis of accelerometer
+- 2 x 1 byte (unsigned int 8) -> samples from two termometers
+
+Notice that the above describes new version of Neuroon's firmware which provides real-time signal streaming.
+
+
 ## Usage
 
 ### Specify input and output files
+
 Use it from command line like this:
 ```
 ./NeuroonRawStreamParser-exe eeg_stream.bin pat_stream.bin metadata.csv(optional) out_eeg.csv out_pat.csv
@@ -56,8 +81,9 @@ out_pat.csv    - output file for csv containing pulsoxymeter, accelerometer and 
 
 
 ### Process entire directory
+
 To parse entire directory call the program without arguments. Parser will try to find groups of files describing
-Neuroon binary data and parse it to csv files.
+Neuroon binary data and parse it concurrently to csv files.
 
 ```
 ./NeuroonRawStreamParser-exe
@@ -76,6 +102,7 @@ Each group can't contain '-' character. Stream identifier should contain lowcase
 
 - Better input arguments structure.
 - Help messages.
+- ...
 
 ## Contributing
 
@@ -89,7 +116,7 @@ Michał Adamczyk <m.adamczyk@inteliclinic.com>
 
 MIT License
 
-Copyright (c) 2017 Michał Adamczyk
+Copyright (c) 2017 Inteliclinic, Sp. z o. o.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
