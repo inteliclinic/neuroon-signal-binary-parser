@@ -1,13 +1,13 @@
 name:                NeuroonRawStreamParsers
-version:             0.1.0.0
+version:             0.1.0.1
 -- synopsis:
 -- description:
-homepage:            https://github.com/githubuser/NeuroonRawStreamParsers#readme
-license:             BSD3
+homepage:            https://github.com/inteliclinic/NeuroonRawStreamParsers#readme
+license:             MIT
 license-file:        LICENSE
-author:              Author name here
-maintainer:          example@example.com
-copyright:           2017 Author name here
+author:              Michał Adamczyk
+maintainer:          m.adamczyk@inteliclinic.com
+copyright:           2017 Inteliclinic Sp. z o.o.
 category:            Web
 build-type:          Simple
 extra-source-files:  README.md
